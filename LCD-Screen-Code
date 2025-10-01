@@ -1,0 +1,105 @@
+#include <Wire.h>
+#include <U8g2lib.h>
+
+#define SDA_PIN 22
+#define SCL_PIN 20
+#define BTN_PIN 26   // Start/Pause button to GND (active-LOW)
+
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(
+  U8G2_R0, /* reset=*/ U8X8_PIN_NONE, /* clock=*/ SCL_PIN, /* data=*/ SDA_PIN);
+
+// --- Stopwatch state ---
+unsigned long last = 0, elapsed = 0;
+bool running = false;
+bool lastBtn = HIGH;          // for simple edge detection
+
+// --- Animation state ---
+int carX = 0;
+const int carY = 36;          // vertical placement of car body
+const int carW = 34;
+const int carH = 12;
+const int screenW = 128;
+const int screenH = 64;
+int dx = 2;                   // pixels per frame while running
+
+// Frame limiting (about 20 FPS)
+unsigned long lastFrame = 0;
+const unsigned long frameInterval = 50; // ms
+
+// Draw a very simple car using vector shapes (no bitmap needed)
+void drawCar(int x, int y) {
+  // Body
+  u8g2.drawRBox(x, y, carW, carH, 3);          // rounded body
+  // Cab
+  u8g2.drawBox(x + 9, y - 6, 16, 6);           // small cab
+  // Wheels
+  u8g2.drawDisc(x + 7,  y + carH, 3);
+  u8g2.drawDisc(x + 26, y + carH, 3);
+}
+
+// Draw a dashed road
+void drawRoad(int y) {
+  for (int x = 0; x < screenW; x += 12) {
+    u8g2.drawBox(x, y, 8, 1);
+  }
+}
+
+void setup() {
+  Wire.begin(SDA_PIN, SCL_PIN, 100000);
+  u8g2.begin();
+  pinMode(BTN_PIN, INPUT_PULLUP);
+}
+
+void loop() {
+  // --- Handle button (falling-edge toggle) ---
+  bool btn = digitalRead(BTN_PIN);
+  if (lastBtn == HIGH && btn == LOW) {
+    running = !running;
+    delay(200); // crude debounce
+  }
+  lastBtn = btn;
+
+  // --- Stopwatch update ---
+  unsigned long now = millis();
+  if (running) {
+    elapsed += (now - last);
+  }
+  last = now;
+
+  // --- Animation update at fixed FPS ---
+  if (now - lastFrame >= frameInterval) {
+    lastFrame = now;
+
+    if (running) {
+      carX += dx;
+      if (carX > screenW) carX = -carW; // wrap around smoothly
+    }
+
+    // --- Render ---
+    u8g2.clearBuffer();
+
+    // Header
+    u8g2.setFont(u8g2_font_6x12_tr);
+    u8g2.drawStr(0, 10, running ? "STOPWATCH (Running)" : "STOPWATCH (Paused)");
+
+    // Time (big, centered)
+    unsigned long s = elapsed / 1000;
+    char buf[12];
+    sprintf(buf, "%02lu:%02lu", s/60, s%60);
+    u8g2.setFont(u8g2_font_ncenB14_tr);
+    // Center horizontally
+    int16_t tbw = u8g2.getUTF8Width(buf);
+    int xTime = (screenW - tbw) / 2;
+    u8g2.drawStr(xTime, 30, buf);
+
+    // Road + car
+    drawRoad(50);
+    drawCar(carX, carY);
+
+    // Footer hint
+    u8g2.setFont(u8g2_font_6x12_tr);
+    u8g2.drawStr(10, 62, "BTN26 = Start/Pause");
+
+    u8g2.sendBuffer();
+  }
+}
